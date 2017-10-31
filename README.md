@@ -1,4 +1,5 @@
-![Yoga Token](readme-header.png)
+# Yoga Token
+
 
 
 
