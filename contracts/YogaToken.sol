@@ -17,32 +17,33 @@ pragma solidity ^0.4.18;
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/// @title MiniMeToken Contract
+/// @title Yoga Token Contract
 /// @author Jordi Baylina
 /// @dev This token contract's goal is to make it easy for anyone to clone this
 ///  token using the token distribution at a given block, this will allow DAO's
 ///  and DApps to upgrade their features in a decentralized manner without
 ///  affecting the original token
-/// @dev It is ERC20 compliant, but still needs to under go further testing.
+/// @dev It is ERC223 compliant and also implements some ERC20 functionts to
+///  maintain backwards compatibility.
 
 import "./Controlled.sol";
 import "./EnsPseudoIntrospectionSupport.sol";
-import "./IERC223bTokenFallback.sol";
-import "./IERC223bMiniMeTokenController.sol";
+import "./ITokenFallback.sol";
+import "./ITokenController.sol";
 
-contract ApproveAndCallFallBack {
+contract IApproveAndCallFallBack {
     function receiveApproval(address from, uint256 _amount, address _token, bytes _data) public;
 }
 
 /// @dev The actual token contract, the default controller is the msg.sender
 ///  that deploys the contract, so usually this token will be deployed by a
 ///  token controller contract, which Giveth will call a "Campaign"
-contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
+contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
 
     string public name;                //The Token's name: e.g. DigixDAO Tokens
     uint8 public decimals;             //Number of decimals of the smallest unit
     string public symbol;              //An identifier: e.g. REP
-    string public version = 'ERC223bMiniMeToken_1.0'; //An arbitrary versioning scheme
+    string public version = 'YogaToken_1.0'; //An arbitrary versioning scheme
 
 
     /// @dev `Checkpoint` is the structure that attaches a block number to a
@@ -59,7 +60,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
 
     // `parentToken` is the Token address that was cloned to produce this token;
     //  it will be 0x0 for a token that was not cloned
-    ERC223bMiniMeToken public parentToken;
+    YogaToken public parentToken;
 
     // `parentSnapShotBlock` is the block number from the Parent Token that was
     //  used to determine the initial distribution of the Clone Token
@@ -72,6 +73,9 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
     //  contract when the balance changes the block number that the change
     //  occurred is also included in the map
     mapping (address => Checkpoint[]) balances;
+
+    // `allowed` tracks any extra transfer rights as in all ERC20 tokens
+    mapping (address => mapping (address => uint256)) allowed;
 
     // Tracks the history of the `totalSupply` of the token
     Checkpoint[] totalSupplyHistory;
@@ -99,7 +103,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @param _decimalUnits Number of decimals of the new token
     /// @param _tokenSymbol Token Symbol for the new token
     /// @param _transfersEnabled If true, tokens will be able to be transferred
-    function ERC223bMiniMeToken(
+    function YogaToken(
         address _tokenFactory,
         address _parentToken,
         uint _parentSnapShotBlock,
@@ -112,7 +116,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
         name = _tokenName;                                 // Set the name
         decimals = _decimalUnits;                          // Set the decimals
         symbol = _tokenSymbol;                             // Set the symbol
-        parentToken = ERC223bMiniMeToken(_parentToken);
+        parentToken = YogaToken(_parentToken);
         parentSnapShotBlock = _parentSnapShotBlock;
         transfersEnabled = _transfersEnabled;
         creationBlock = block.number;
@@ -121,17 +125,8 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
 
 
 ///////////////////
-// ERC20 Methods
+// ERC223 Methods
 ///////////////////
-
-    /// @notice Send `_amount` tokens to `_to` from `msg.sender`
-    /// @param _to The address of the recipient
-    /// @param _amount The amount of tokens to be transferred
-    /// @return Whether the transfer was successful or not
-    function transfer(address _to, uint256 _amount) public returns (bool success) {
-        if (!transfersEnabled) return false;
-        return doTransfer(msg.sender, _to, _amount, "");
-    }
 
     /// @notice Send `_amount` tokens to `_to` from `msg.sender`
     /// @param _to The address of the recipient
@@ -143,6 +138,42 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
         return doTransfer(msg.sender, _to, _amount, _data);
     }
 
+///////////////////
+// ERC20 Compatible Methods
+///////////////////
+
+    /// @notice Send `_amount` tokens to `_to` from `msg.sender`
+    /// @param _to The address of the recipient
+    /// @param _amount The amount of tokens to be transferred
+    /// @return Whether the transfer was successful or not
+    function transfer(address _to, uint256 _amount) public returns (bool success) {
+        if (!transfersEnabled) return false;
+        return doTransfer(msg.sender, _to, _amount, "");
+    }
+
+    /// @notice Send `_amount` tokens to `_to` from `_from` on the condition it
+    ///  is approved by `_from`
+    /// @param _from The address holding the tokens being transferred
+    /// @param _to The address of the recipient
+    /// @param _amount The amount of tokens to be transferred
+    /// @return True if the transfer was successful
+    function transferFrom(address _from, address _to, uint256 _amount
+    ) public returns (bool success) {
+
+        // The controller of this contract can move tokens around at will,
+        //  this is important to recognize! Confirm that you trust the
+        //  controller of this contract, which in most situations should be
+        //  another open source smart contract or 0x0
+        if (msg.sender != controller) {
+            if (!transfersEnabled) return false;
+
+            // The standard ERC 20 transferFrom functionality
+            if (allowed[_from][msg.sender] < _amount) return false;
+            allowed[_from][msg.sender] -= _amount;
+        }
+        return doTransfer(_from, _to, _amount, "");
+    }
+
     /// @dev This is the actual transfer function in the token contract, it can
     ///  only be called by other functions in this contract.
     /// @param _from The address holding the tokens being transferred
@@ -151,10 +182,6 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @return True if the transfer was successful
     function doTransfer(address _from, address _to, uint _amount, bytes _data
     ) internal returns(bool) {
-
-            if (_amount == 0) {
-               return true;
-            }
 
             require(parentSnapShotBlock < block.number);
 
@@ -168,16 +195,18 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
                return false;
             }
 
-            address controllerImpl = interfaceAddr(controller, "IERC223bMiniMeTokenController");
+            address controllerImpl = interfaceAddr(controller, "ITokenController");
             if (controllerImpl != 0) {
-                if (!IERC223bMiniMeTokenController(controllerImpl).onTransfer(_from, _to, _amount, _data)) return false;
+                if (!ITokenController(controllerImpl).onTransfer(_from, _to, _amount, _data)) return false;
             }
 
-            address fallbackImpl = interfaceAddr(_to, "IERC223bTokenFallback");
+            address fallbackImpl = interfaceAddr(_to, "ITokenFallback");
 
-            // If IERC223bTokenFallback is not implemented for _to only allow
+            // If ITokenFallback is not implemented for _to only allow
             // transfers to normal address and not to contracts.
-            if (fallbackImpl == 0 && isContract(_to)) return false;
+            // It allows transfer also if msg.sender is the recipient
+            //   This situation tipically happen after approve in ERC20 compatible.
+            if (fallbackImpl == 0 && isContract(_to) && (_to != msg.sender)) return false;
 
             // First update the balance array with the new value for the address
             //  sending the tokens
@@ -193,7 +222,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
             Transfer(_from, _to, _amount, _data);
 
             if (fallbackImpl != 0) {
-                IERC223bTokenFallback(fallbackImpl).tokenFallback(_from, _to, _amount, _data);
+                if (!ITokenFallback(fallbackImpl).tokenFallback(_from, _to, _amount, _data)) return false;
             }
 
             return true;
@@ -203,6 +232,57 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @return The balance of `_owner` at the current block
     function balanceOf(address _owner) public constant returns (uint256 balance) {
         return balanceOfAt(_owner, block.number);
+    }
+
+    /// @notice `msg.sender` approves `_spender` to spend `_amount` tokens on
+    ///  its behalf. This is a modified version of the ERC20 approve function
+    ///  to be a little bit safer
+    /// @param _spender The address of the account able to transfer the tokens
+    /// @param _amount The amount of tokens to be approved for transfer
+    /// @return True if the approval was successful
+    function approve(address _spender, uint256 _amount) public returns (bool success) {
+        require(transfersEnabled);
+
+        // To change the approve amount you first have to reduce the addresses`
+        //  allowance to zero by calling `approve(_spender,0)` if it is not
+        //  already 0 to mitigate the race condition described here:
+        //  https://github.com/ethereum/EIPs/issues/20#issuecomment-263524729
+        require((_amount == 0) || (allowed[msg.sender][_spender] == 0));
+
+        allowed[msg.sender][_spender] = _amount;
+        Approval(msg.sender, _spender, _amount);
+        return true;
+    }
+
+    /// @dev This function makes it easy to read the `allowed[]` map
+    /// @param _owner The address of the account that owns the token
+    /// @param _spender The address of the account able to transfer the tokens
+    /// @return Amount of remaining tokens of _owner that _spender is allowed
+    ///  to spend
+    function allowance(address _owner, address _spender
+    ) public constant returns (uint256 remaining) {
+        return allowed[_owner][_spender];
+    }
+
+    /// @notice `msg.sender` approves `_spender` to send `_amount` tokens on
+    ///  its behalf, and then a function is triggered in the contract that is
+    ///  being approved, `_spender`. This allows users to use their tokens to
+    ///  interact with contracts in one function call instead of two
+    /// @param _spender The address of the contract able to transfer the tokens
+    /// @param _amount The amount of tokens to be approved for transfer
+    /// @return True if the function call was successful
+    function approveAndCall(address _spender, uint256 _amount, bytes _extraData
+    ) public returns (bool success) {
+        require(approve(_spender, _amount));
+
+        IApproveAndCallFallBack(_spender).receiveApproval(
+            msg.sender,
+            _amount,
+            this,
+            _extraData
+        );
+
+        return true;
     }
 
     /// @dev This function makes it easy to get the total number of tokens
@@ -289,7 +369,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
         bool _transfersEnabled
         ) public returns(address) {
         if (_snapshotBlock == 0) _snapshotBlock = block.number;
-        ERC223bMiniMeToken cloneToken = tokenFactory.createCloneToken(
+        YogaToken cloneToken = tokenFactory.createCloneToken(
             this,
             _snapshotBlock,
             _cloneTokenName,
@@ -331,7 +411,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
         Transfer(0, _owner, _amount, _data);
 
         if (fallbackImpl != 0) {
-            IERC223bTokenFallback(fallbackImpl).tokenFallback(0, _owner, _amount, _data);
+            ITokenFallback(fallbackImpl).tokenFallback(0, _owner, _amount, _data);
         }
 
         return true;
@@ -424,7 +504,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
     function () public payable {
         address controllerImpl = interfaceAddr(controller, "IERC223bMiniMeTokenController");
         require(controllerImpl != 0);
-        require(IERC223bMiniMeTokenController(controllerImpl).proxyPayment.value(msg.value)(msg.sender));
+        require(ITokenController(controllerImpl).proxyPayment.value(msg.value)(msg.sender));
     }
 
 //////////
@@ -441,7 +521,7 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
             return;
         }
 
-        ERC223bMiniMeToken token = ERC223bMiniMeToken(_token);
+        YogaToken token = YogaToken(_token);
         uint balance = token.balanceOf(this);
         token.transfer(controller, balance);
         ClaimedTokens(_token, controller, balance);
@@ -453,6 +533,11 @@ contract ERC223bMiniMeToken is Controlled, EnsPseudoIntrospectionSupport {
     event ClaimedTokens(address indexed token, address indexed controller, uint amount);
     event Transfer(address indexed from, address indexed to, uint256 amount, bytes data);
     event NewCloneToken(address indexed cloneToken, uint snapshotBlock);
+    event Approval(
+        address indexed _owner,
+        address indexed _spender,
+        uint256 _amount
+        );
 
 }
 
@@ -483,8 +568,8 @@ contract MiniMeTokenFactory {
         uint8 _decimalUnits,
         string _tokenSymbol,
         bool _transfersEnabled
-    ) public returns (ERC223bMiniMeToken) {
-        ERC223bMiniMeToken newToken = new ERC223bMiniMeToken(
+    ) public returns (YogaToken) {
+        YogaToken newToken = new YogaToken(
             this,
             _parentToken,
             _snapshotBlock,

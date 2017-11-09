@@ -24,7 +24,7 @@ pragma solidity ^0.4.18;
 ///  funds for non-profit causes, but it can be customized for any variety of
 ///  purposes.
 
-import "./ERC223bMiniMeToken.sol";
+import "./YogaToken.sol";
 
 
 /// @dev `Owned` is a base level contract that assigns an `owner` that can be
@@ -52,13 +52,13 @@ contract Owned {
 ///  non-profit Campaign. This contract effectively dictates the terms of the
 ///  funding round.
 
-contract Campaign is IERC223bMiniMeTokenController, Owned, EnsPseudoIntrospectionSupport {
+contract Campaign is ITokenController, Owned, EnsPseudoIntrospectionSupport {
 
     uint public startFundingTime;       // In UNIX Time Format
     uint public endFundingTime;         // In UNIX Time Format
     uint public maximumFunding;         // In wei
     uint public totalCollected;         // In wei
-    ERC223bMiniMeToken public tokenContract;   // The new token for this Campaign
+    YogaToken public tokenContract;   // The new token for this Campaign
     address public vaultAddress;        // The address to hold the funds donated
 
 /// @notice 'Campaign()' initiates the Campaign by setting its funding
@@ -88,9 +88,9 @@ contract Campaign is IERC223bMiniMeTokenController, Owned, EnsPseudoIntrospectio
         startFundingTime = _startFundingTime;
         endFundingTime = _endFundingTime;
         maximumFunding = _maximumFunding;
-        tokenContract = ERC223bMiniMeToken(_tokenAddress);// The Deployed Token Contract
+        tokenContract = YogaToken(_tokenAddress);// The Deployed Token Contract
         vaultAddress = _vaultAddress;
-        setInterfaceImplementation("IERC223bMiniMeTokenController", address(this));
+        setInterfaceImplementation("ITokenController", address(this));
 
     }
 
