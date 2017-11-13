@@ -9,7 +9,7 @@ contract Controlled {
 
     address public controller;
 
-    function IControlled() public { controller = msg.sender;}
+    function Controlled() public { controller = msg.sender;}
 
     /// @notice Changes the controller of the contract
     /// @param _newController The new controller of the contract
@@ -47,26 +47,28 @@ contract EnsPseudoIntrospectionSupport {
     address constant ENS_MAIN = 0x314159265dD8dbb310642f98f50C066173C1259b;
     address constant ENS_ROPSTEM = 0x112234455C3a32FD11230C42E7Bccd4A84e02010;
     address constant ENS_RINKEBY = 0xe7410170f87102DF0055eB195163A03B7F2Bff4A;
+    address constant ENS_SIMULATOR = 0x8cDE56336E289c028C8f7CF5c20283fF02272182;
     bytes32 constant public REVERSE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('reverse')), keccak256('addr'));
-    bytes32 constant public PUBLICRESOLVE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('eth')), keccak256('resolve'));
+    bytes32 constant public PUBLICRESOLVE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('eth')), keccak256('resolver'));
     IENS public ens;
     IReverseRegistrar public reverseRegistrar;
     IPublicResolver public publicResolver;
 
-    function BaseContract() public {
+    function EnsPseudoIntrospectionSupport() public {
       if (isContract(ENS_MAIN)) {
         ens = IENS(ENS_MAIN);
       } else if (isContract(ENS_ROPSTEM)) {
         ens = IENS(ENS_ROPSTEM);
       } else if (isContract(ENS_RINKEBY)) {
         ens = IENS(ENS_RINKEBY);
+      } else if (isContract(ENS_SIMULATOR)) {
+        ens = IENS(ENS_SIMULATOR);
       } else {
         assert(false);
       }
 
       IPublicResolver resolver;
-      resolver = IPublicResolver(ens.resolver(REVERSE_ROOT_NODE));
-      reverseRegistrar = IReverseRegistrar(resolver.addr(REVERSE_ROOT_NODE));
+      reverseRegistrar = IReverseRegistrar(ens.owner(REVERSE_ROOT_NODE));
 
       resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
       publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
@@ -91,6 +93,7 @@ contract EnsPseudoIntrospectionSupport {
         bytes32 node = rootNodeForAddress(address(addr));
         bytes32 ifaceNode = keccak256(node, keccak256(ifaceLabel));
         IPublicResolver resolver = IPublicResolver(ens.resolver(ifaceNode));
+        if (address(resolver) == 0) return 0;
         return resolver.addr(ifaceNode);
     }
 
@@ -241,14 +244,14 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     bool public transfersEnabled;
 
     // The factory used to create new clone tokens
-    MiniMeTokenFactory public tokenFactory;
+    YogaTokenFactory public tokenFactory;
 
 ////////////////
 // Constructor
 ////////////////
 
-    /// @notice Constructor to create a MiniMeToken
-    /// @param _tokenFactory The address of the MiniMeTokenFactory contract that
+    /// @notice Constructor to create a YogaToken
+    /// @param _tokenFactory The address of the YogaTokenFactory contract that
     ///  will create the Clone token contracts, the token factory needs to be
     ///  deployed first
     /// @param _parentToken Address of the parent token, set to 0x0 if it is a
@@ -269,7 +272,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
         string _tokenSymbol,
         bool _transfersEnabled
     ) public {
-        tokenFactory = MiniMeTokenFactory(_tokenFactory);
+        tokenFactory = YogaTokenFactory(_tokenFactory);
         name = _tokenName;                                 // Set the name
         decimals = _decimalUnits;                          // Set the decimals
         symbol = _tokenSymbol;                             // Set the symbol
@@ -277,7 +280,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
         parentSnapShotBlock = _parentSnapShotBlock;
         transfersEnabled = _transfersEnabled;
         creationBlock = block.number;
-        setInterfaceImplementation("IERC223b", address(this));
+        setInterfaceImplementation("IYogaToken", address(this));
     }
 
 
@@ -517,7 +520,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     ///  copied to set the initial distribution of the new clone token;
     ///  if the block is zero than the actual block, the current block is used
     /// @param _transfersEnabled True if transfers are allowed in the clone
-    /// @return The address of the new MiniMeToken Contract
+    /// @return The address of the new YogaToken Contract
     function createCloneToken(
         string _cloneTokenName,
         uint8 _cloneDecimalUnits,
@@ -545,24 +548,36 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
 ////////////////
 // Generate and destroy tokens
 ////////////////
-
     /// @notice Generates `_amount` tokens that are assigned to `_owner`
     /// @param _owner The address that will be assigned the new tokens
     /// @param _amount The quantity of tokens generated
     /// @return True if the tokens are generated correctly
+    function generateTokens(address _owner, uint _amount
+    ) public returns (bool) {
+        return generateTokens(_owner, _amount, "");
+    }
+
+
+    /// @notice Generates `_amount` tokens that are assigned to `_owner`
+    /// @param _owner The address that will be assigned the new tokens
+    /// @param _amount The quantity of tokens generated
+    /// @param _data The data to be sended to tokenFallback
+    /// @return True if the tokens are generated correctly
     function generateTokens(address _owner, uint _amount, bytes _data
     ) public onlyController returns (bool) {
 
-        address fallbackImpl = interfaceAddr(_owner, "IERC223bTokenFallback");
+        address fallbackImpl = interfaceAddr(_owner, "ITokenFallback");
 
-        // If IERC223bTokenFallback is not implemented for _to only allow
+        // If ITokenFallback is not implemented for _to only allow
         // transfers to normal address and not to contracts.
         if (fallbackImpl == 0 && isContract(_owner)) return false;
 
         uint curTotalSupply = totalSupply();
         require(curTotalSupply + _amount >= curTotalSupply); // Check for overflow
+
         uint previousBalanceTo = balanceOf(_owner);
         require(previousBalanceTo + _amount >= previousBalanceTo); // Check for overflow
+
         updateValueAtNow(totalSupplyHistory, curTotalSupply + _amount);
         updateValueAtNow(balances[_owner], previousBalanceTo + _amount);
         Transfer(0, _owner, _amount, _data);
@@ -659,7 +674,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     ///  set to 0, then the `proxyPayment` method is called which relays the
     ///  ether and creates tokens as described in the token controller contract
     function () public payable {
-        address controllerImpl = interfaceAddr(controller, "IERC223bMiniMeTokenController");
+        address controllerImpl = interfaceAddr(controller, "ITokenController");
         require(controllerImpl != 0);
         require(ITokenController(controllerImpl).proxyPayment.value(msg.value)(msg.sender));
     }
@@ -700,13 +715,13 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
 
 
 ////////////////
-// MiniMeTokenFactory
+// YogaTokenFactory
 ////////////////
 
 /// @dev This contract is used to generate clone contracts from a contract.
 ///  In solidity this is the way to create a contract from a contract of the
 ///  same class
-contract MiniMeTokenFactory {
+contract YogaTokenFactory {
 
     /// @notice Update the DApp by creating a new token with new functionalities
     ///  the msg.sender becomes the controller of this clone token

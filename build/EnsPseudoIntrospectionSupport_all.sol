@@ -28,26 +28,28 @@ contract EnsPseudoIntrospectionSupport {
     address constant ENS_MAIN = 0x314159265dD8dbb310642f98f50C066173C1259b;
     address constant ENS_ROPSTEM = 0x112234455C3a32FD11230C42E7Bccd4A84e02010;
     address constant ENS_RINKEBY = 0xe7410170f87102DF0055eB195163A03B7F2Bff4A;
+    address constant ENS_SIMULATOR = 0x8cDE56336E289c028C8f7CF5c20283fF02272182;
     bytes32 constant public REVERSE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('reverse')), keccak256('addr'));
-    bytes32 constant public PUBLICRESOLVE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('eth')), keccak256('resolve'));
+    bytes32 constant public PUBLICRESOLVE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('eth')), keccak256('resolver'));
     IENS public ens;
     IReverseRegistrar public reverseRegistrar;
     IPublicResolver public publicResolver;
 
-    function BaseContract() public {
+    function EnsPseudoIntrospectionSupport() public {
       if (isContract(ENS_MAIN)) {
         ens = IENS(ENS_MAIN);
       } else if (isContract(ENS_ROPSTEM)) {
         ens = IENS(ENS_ROPSTEM);
       } else if (isContract(ENS_RINKEBY)) {
         ens = IENS(ENS_RINKEBY);
+      } else if (isContract(ENS_SIMULATOR)) {
+        ens = IENS(ENS_SIMULATOR);
       } else {
         assert(false);
       }
 
       IPublicResolver resolver;
-      resolver = IPublicResolver(ens.resolver(REVERSE_ROOT_NODE));
-      reverseRegistrar = IReverseRegistrar(resolver.addr(REVERSE_ROOT_NODE));
+      reverseRegistrar = IReverseRegistrar(ens.owner(REVERSE_ROOT_NODE));
 
       resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
       publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
@@ -72,6 +74,7 @@ contract EnsPseudoIntrospectionSupport {
         bytes32 node = rootNodeForAddress(address(addr));
         bytes32 ifaceNode = keccak256(node, keccak256(ifaceLabel));
         IPublicResolver resolver = IPublicResolver(ens.resolver(ifaceNode));
+        if (address(resolver) == 0) return 0;
         return resolver.addr(ifaceNode);
     }
 

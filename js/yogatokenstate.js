@@ -1,4 +1,4 @@
-class MiniMeTokenState {
+class YogaTokenState {
   constructor(minimeToken) {
     this.$token = minimeToken;
   }
@@ -40,5 +40,5 @@ class MiniMeTokenState {
   }
 }
 
-module.exports = MiniMeTokenState;
+module.exports = YogaTokenState;
 
