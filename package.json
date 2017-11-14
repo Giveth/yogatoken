@@ -33,7 +33,7 @@
   },
   "homepage": "https://github.com/Giveth/yogatoken",
   "dependencies": {
-    "ens-simulator": "^0.2.0",
+    "ens-simulator": "^0.3.1",
     "eth-contract-class": "0.0.6"
   },
   "devDependencies": {

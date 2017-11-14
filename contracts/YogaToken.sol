@@ -132,9 +132,8 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @param _to The address of the recipient
     /// @param _amount The amount of tokens to be transferred
     /// @param _data Date to be transfered to the receipt interface
-    /// @return Whether the transfer was successful or not
-    function transfer(address _to, uint256 _amount, bytes _data) public returns (bool success) {
-        if (!transfersEnabled) return false;
+    function transfer(address _to, uint256 _amount, bytes _data) public {
+        require(transfersEnabled);
         return doTransfer(msg.sender, _to, _amount, _data);
     }
 
@@ -145,10 +144,10 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @notice Send `_amount` tokens to `_to` from `msg.sender`
     /// @param _to The address of the recipient
     /// @param _amount The amount of tokens to be transferred
-    /// @return Whether the transfer was successful or not
-    function transfer(address _to, uint256 _amount) public returns (bool success) {
-        if (!transfersEnabled) return false;
-        return doTransfer(msg.sender, _to, _amount, "");
+    function transfer(address _to, uint256 _amount) public returns(bool) {
+        require(transfersEnabled);
+        doTransfer(msg.sender, _to, _amount, "");
+        return true; // For backwards compatibility.
     }
 
     /// @notice Send `_amount` tokens to `_to` from `_from` on the condition it
@@ -156,22 +155,22 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @param _from The address holding the tokens being transferred
     /// @param _to The address of the recipient
     /// @param _amount The amount of tokens to be transferred
-    /// @return True if the transfer was successful
     function transferFrom(address _from, address _to, uint256 _amount
-    ) public returns (bool success) {
+    ) public returns (bool) {
 
         // The controller of this contract can move tokens around at will,
         //  this is important to recognize! Confirm that you trust the
         //  controller of this contract, which in most situations should be
         //  another open source smart contract or 0x0
         if (msg.sender != controller) {
-            if (!transfersEnabled) return false;
+            require(transfersEnabled);
 
             // The standard ERC 20 transferFrom functionality
-            if (allowed[_from][msg.sender] < _amount) return false;
+            require(allowed[_from][msg.sender] >= _amount);
             allowed[_from][msg.sender] -= _amount;
         }
-        return doTransfer(_from, _to, _amount, "");
+        doTransfer(_from, _to, _amount, "");
+        return true;  // For backward compatibility (It will return true or with throw)
     }
 
     /// @dev This is the actual transfer function in the token contract, it can
@@ -179,53 +178,48 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @param _from The address holding the tokens being transferred
     /// @param _to The address of the recipient
     /// @param _amount The amount of tokens to be transferred
-    /// @return True if the transfer was successful
     function doTransfer(address _from, address _to, uint _amount, bytes _data
-    ) internal returns(bool) {
+    ) internal {
 
-            require(parentSnapShotBlock < block.number);
+        require(parentSnapShotBlock < block.number);
 
-            // Do not allow transfer to 0x0 or the token contract itself
-            require((_to != 0) && (_to != address(this)));
+        // Do not allow transfer to 0x0 or the token contract itself
+        require((_to != 0) && (_to != address(this)));
 
-            // If the amount being transfered is more than the balance of the
-            //  account the transfer returns false
-            var previousBalanceFrom = balanceOfAt(_from, block.number);
-            if (previousBalanceFrom < _amount) {
-               return false;
-            }
+        // If the amount being transfered is more than the balance of the
+        //  account the transfer throw
+        var previousBalanceFrom = balanceOfAt(_from, block.number);
+        require (previousBalanceFrom >= _amount);
 
-            address controllerImpl = interfaceAddr(controller, "ITokenController");
-            if (controllerImpl != 0) {
-                if (!ITokenController(controllerImpl).onTransfer(_from, _to, _amount, _data)) return false;
-            }
+        address controllerImpl = interfaceAddr(controller, "ITokenController");
+        if (controllerImpl != 0) {
+            ITokenController(controllerImpl).onTransfer(_from, _to, _amount, _data);
+        }
 
-            address fallbackImpl = interfaceAddr(_to, "ITokenFallback");
+        address fallbackImpl = interfaceAddr(_to, "ITokenFallback");
 
-            // If ITokenFallback is not implemented for _to only allow
-            // transfers to normal address and not to contracts.
-            // It allows transfer also if msg.sender is the recipient
-            //   This situation tipically happen after approve in ERC20 compatible.
-            if (fallbackImpl == 0 && isContract(_to) && (_to != msg.sender)) return false;
+        // If ITokenFallback is not implemented for _to only allow
+        // transfers to normal address and not to contracts.
+        // It allows transfer also if msg.sender is the recipient
+        //   This situation tipically happen after approve in ERC20 compatible.
+        require (fallbackImpl != 0 || (!isContract(_to)) || (_to == msg.sender));
 
-            // First update the balance array with the new value for the address
-            //  sending the tokens
-            updateValueAtNow(balances[_from], previousBalanceFrom - _amount);
+        // First update the balance array with the new value for the address
+        //  sending the tokens
+        updateValueAtNow(balances[_from], previousBalanceFrom - _amount);
 
-            // Then update the balance array with the new value for the address
-            //  receiving the tokens
-            var previousBalanceTo = balanceOfAt(_to, block.number);
-            require(previousBalanceTo + _amount >= previousBalanceTo); // Check for overflow
-            updateValueAtNow(balances[_to], previousBalanceTo + _amount);
+        // Then update the balance array with the new value for the address
+        //  receiving the tokens
+        var previousBalanceTo = balanceOfAt(_to, block.number);
+        require(previousBalanceTo + _amount >= previousBalanceTo); // Check for overflow
+        updateValueAtNow(balances[_to], previousBalanceTo + _amount);
 
-            // An event to make the transfer easy to find on the blockchain
-            Transfer(_from, _to, _amount, _data);
+        // An event to make the transfer easy to find on the blockchain
+        Transfer(_from, _to, _amount, _data);
 
-            if (fallbackImpl != 0) {
-                if (!ITokenFallback(fallbackImpl).tokenFallback(_from, _to, _amount, _data)) return false;
-            }
-
-            return true;
+        if (fallbackImpl != 0) {
+            ITokenFallback(fallbackImpl).tokenFallback(_from, _to, _amount, _data);
+        }
     }
 
     /// @param _owner The address that's balance is being requested
@@ -239,8 +233,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     ///  to be a little bit safer
     /// @param _spender The address of the account able to transfer the tokens
     /// @param _amount The amount of tokens to be approved for transfer
-    /// @return True if the approval was successful
-    function approve(address _spender, uint256 _amount) public returns (bool success) {
+    function approve(address _spender, uint256 _amount) public returns(bool) {
         require(transfersEnabled);
 
         // To change the approve amount you first have to reduce the addresses`
@@ -251,7 +244,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
 
         allowed[msg.sender][_spender] = _amount;
         Approval(msg.sender, _spender, _amount);
-        return true;
+        return true;  // For backwards compatibility
     }
 
     /// @dev This function makes it easy to read the `allowed[]` map
@@ -272,8 +265,8 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @param _amount The amount of tokens to be approved for transfer
     /// @return True if the function call was successful
     function approveAndCall(address _spender, uint256 _amount, bytes _extraData
-    ) public returns (bool success) {
-        require(approve(_spender, _amount));
+    ) public {
+        approve(_spender, _amount);
 
         IApproveAndCallFallBack(_spender).receiveApproval(
             msg.sender,
@@ -281,8 +274,6 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
             this,
             _extraData
         );
-
-        return true;
     }
 
     /// @dev This function makes it easy to get the total number of tokens
@@ -391,10 +382,9 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @notice Generates `_amount` tokens that are assigned to `_owner`
     /// @param _owner The address that will be assigned the new tokens
     /// @param _amount The quantity of tokens generated
-    /// @return True if the tokens are generated correctly
     function generateTokens(address _owner, uint _amount
-    ) public returns (bool) {
-        return generateTokens(_owner, _amount, "");
+    ) public {
+        generateTokens(_owner, _amount, "");
     }
 
 
@@ -404,13 +394,13 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     /// @param _data The data to be sended to tokenFallback
     /// @return True if the tokens are generated correctly
     function generateTokens(address _owner, uint _amount, bytes _data
-    ) public onlyController returns (bool) {
+    ) public onlyController {
 
         address fallbackImpl = interfaceAddr(_owner, "ITokenFallback");
 
         // If ITokenFallback is not implemented for _to only allow
         // transfers to normal address and not to contracts.
-        if (fallbackImpl == 0 && isContract(_owner)) return false;
+        require (fallbackImpl != 0 || (!isContract(_owner)));
 
         uint curTotalSupply = totalSupply();
         require(curTotalSupply + _amount >= curTotalSupply); // Check for overflow
@@ -425,17 +415,14 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
         if (fallbackImpl != 0) {
             ITokenFallback(fallbackImpl).tokenFallback(0, _owner, _amount, _data);
         }
-
-        return true;
     }
 
 
     /// @notice Burns `_amount` tokens from `_owner`
     /// @param _owner The address that will lose the tokens
     /// @param _amount The quantity of tokens to burn
-    /// @return True if the tokens are burned correctly
     function destroyTokens(address _owner, uint _amount
-    ) onlyController public returns (bool) {
+    ) onlyController public {
         uint curTotalSupply = totalSupply();
         require(curTotalSupply >= _amount);
         uint previousBalanceFrom = balanceOf(_owner);
@@ -443,7 +430,6 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
         updateValueAtNow(totalSupplyHistory, curTotalSupply - _amount);
         updateValueAtNow(balances[_owner], previousBalanceFrom - _amount);
         Transfer(_owner, 0, _amount, "");
-        return true;
     }
 
 ////////////////
@@ -516,7 +502,7 @@ contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
     function () public payable {
         address controllerImpl = interfaceAddr(controller, "ITokenController");
         require(controllerImpl != 0);
-        require(ITokenController(controllerImpl).proxyPayment.value(msg.value)(msg.sender));
+        ITokenController(controllerImpl).proxyPayment.value(msg.value)(msg.sender);
     }
 
 //////////

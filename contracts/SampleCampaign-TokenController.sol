@@ -111,9 +111,8 @@ contract Campaign is ITokenController, Owned, EnsPseudoIntrospectionSupport {
 /// have the tokens created in an address of their choosing
 /// @param _owner The address that will hold the newly created tokens
 
-    function proxyPayment(address _owner) public payable returns(bool) {
+    function proxyPayment(address _owner) public payable {
         doPayment(_owner);
-        return true;
     }
 
 /// @notice Notifies the controller about a transfer, for this Campaign all
@@ -122,8 +121,7 @@ contract Campaign is ITokenController, Owned, EnsPseudoIntrospectionSupport {
 /// @param _to The destination of the transfer
 /// @param _amount The amount of the transfer
 /// @return False if the controller does not authorize the transfer
-    function onTransfer(address _from, address _to, uint _amount, bytes _data) public returns(bool) {
-        return true;
+    function onTransfer(address _from, address _to, uint _amount, bytes _data) public {
     }
 
 
@@ -150,7 +148,7 @@ contract Campaign is ITokenController, Owned, EnsPseudoIntrospectionSupport {
 
 // Creates an equal amount of tokens as ether sent. The new tokens are created
 //  in the `_owner` address
-        require (tokenContract.generateTokens(_owner, msg.value, ""));
+        tokenContract.generateTokens(_owner, msg.value, "");
 
         return;
     }
