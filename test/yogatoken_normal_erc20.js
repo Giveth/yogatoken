@@ -30,7 +30,7 @@ const log = (S) => {
 // b[5]  ->  0, 6, 1, 0
 // b[6]  ->  0, 2, 5. 0
 
-describe('YohaToken test', () => {
+describe('YogaToken test', () => {
   let testrpc;
   let web3;
   let ens;
