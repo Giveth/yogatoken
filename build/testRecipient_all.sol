@@ -1,5 +1,5 @@
 
-//File: contracts/EnsPseudoIntrospectionSupport.sol
+//File: node_modules/eip672/contracts/EIP672.sol
 pragma solidity ^0.4.18;
 
 interface IENS {
@@ -24,7 +24,7 @@ interface IPublicResolver {
 // [functionSig or interfaceId].[address].addr.reverse
 
 // Base contract for any contract that uses EnsPseudoIntrospection
-contract EnsPseudoIntrospectionSupport {
+contract EIP672 {
     address constant ENS_MAIN = 0x314159265dD8dbb310642f98f50C066173C1259b;
     address constant ENS_ROPSTEM = 0x112234455C3a32FD11230C42E7Bccd4A84e02010;
     address constant ENS_RINKEBY = 0xe7410170f87102DF0055eB195163A03B7F2Bff4A;
@@ -32,10 +32,8 @@ contract EnsPseudoIntrospectionSupport {
     bytes32 constant public REVERSE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('reverse')), keccak256('addr'));
     bytes32 constant public PUBLICRESOLVE_ROOT_NODE = keccak256(keccak256(bytes32(0), keccak256('eth')), keccak256('resolver'));
     IENS public ens;
-    IReverseRegistrar public reverseRegistrar;
-    IPublicResolver public publicResolver;
 
-    function EnsPseudoIntrospectionSupport() public {
+    function EIP672() public {
       if (isContract(ENS_MAIN)) {
         ens = IENS(ENS_MAIN);
       } else if (isContract(ENS_ROPSTEM)) {
@@ -48,11 +46,10 @@ contract EnsPseudoIntrospectionSupport {
         assert(false);
       }
 
-      IPublicResolver resolver;
-      reverseRegistrar = IReverseRegistrar(ens.owner(REVERSE_ROOT_NODE));
+      IReverseRegistrar reverseRegistrar = IReverseRegistrar(ens.owner(REVERSE_ROOT_NODE));
 
-      resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
-      publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
+      IPublicResolver resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
+      IPublicResolver publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
 
       reverseRegistrar.claimWithResolver(
         address(this),
@@ -66,6 +63,10 @@ contract EnsPseudoIntrospectionSupport {
         bytes32 ifaceNode = keccak256(node, ifaceLabelHash);
 
         ens.setSubnodeOwner(node, ifaceLabelHash, address(this));
+
+        IPublicResolver resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
+        IPublicResolver publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
+
         ens.setResolver(ifaceNode, publicResolver);
         publicResolver.setAddr(ifaceNode, impl);
     }
@@ -129,7 +130,7 @@ contract RecipientERC20 {
 
 }
 
-contract RecipientERC223 is EnsPseudoIntrospectionSupport {
+contract RecipientERC223 is EIP672 {
 
     uint public dataLen;
 

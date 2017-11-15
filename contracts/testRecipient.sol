@@ -1,6 +1,6 @@
 pragma solidity ^0.4.18;
 
-import "./EnsPseudoIntrospectionSupport.sol";
+import "../node_modules/eip672/contracts/EIP672.sol";
 
 contract ERC20 {
     function transferFrom(address from, address to, uint amount) public returns(bool);
@@ -14,7 +14,7 @@ contract RecipientERC20 {
 
 }
 
-contract RecipientERC223 is EnsPseudoIntrospectionSupport {
+contract RecipientERC223 is EIP672 {
 
     uint public dataLen;
 

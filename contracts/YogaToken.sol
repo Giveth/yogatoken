@@ -27,7 +27,7 @@ pragma solidity ^0.4.18;
 ///  maintain backwards compatibility.
 
 import "./Controlled.sol";
-import "./EnsPseudoIntrospectionSupport.sol";
+import "../node_modules/eip672/contracts/EIP672.sol";
 import "./ITokenFallback.sol";
 import "./ITokenController.sol";
 
@@ -38,7 +38,7 @@ contract IApproveAndCallFallBack {
 /// @dev The actual token contract, the default controller is the msg.sender
 ///  that deploys the contract, so usually this token will be deployed by a
 ///  token controller contract, which Giveth will call a "Campaign"
-contract YogaToken is Controlled, EnsPseudoIntrospectionSupport {
+contract YogaToken is Controlled, EIP672 {
 
     string public name;                //The Token's name: e.g. DigixDAO Tokens
     uint8 public decimals;             //Number of decimals of the smallest unit

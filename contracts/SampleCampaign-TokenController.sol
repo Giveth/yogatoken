@@ -52,7 +52,7 @@ contract Owned {
 ///  non-profit Campaign. This contract effectively dictates the terms of the
 ///  funding round.
 
-contract Campaign is ITokenController, Owned, EnsPseudoIntrospectionSupport {
+contract Campaign is ITokenController, Owned, EIP672 {
 
     uint public startFundingTime;       // In UNIX Time Format
     uint public endFundingTime;         // In UNIX Time Format
