@@ -12,3 +12,5 @@ module.exports.ProxyAccept = generateClass(
     tr.ProxyAcceptAbi, tr.ProxyAcceptByteCode);
 module.exports.ProxyReject = generateClass(
     tr.ProxyRejectAbi, tr.ProxyRejectByteCode);
+module.exports.Erc20Operator = generateClass(
+    tr.Erc20OperatorAbi, tr.Erc20OperatorByteCode);

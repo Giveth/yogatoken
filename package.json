@@ -33,9 +33,10 @@
   },
   "homepage": "https://github.com/Giveth/yogatoken",
   "dependencies": {
-    "eip672": "0.0.1",
-    "ens-simulator": "^0.3.1",
-    "eth-contract-class": "0.0.6"
+    "eip672": "0.0.3",
+    "ens-simulator": "^0.3.2",
+    "eth-contract-class": "0.0.6",
+    "solidity-stl": "^0.1.1"
   },
   "devDependencies": {
     "babel-eslint": "^7.2.3",

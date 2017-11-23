@@ -11,5 +11,7 @@ interface ITokenController {
     /// @param _from The origin of the transfer
     /// @param _to The destination of the transfer
     /// @param _amount The amount of the transfer
-    function onTransfer(address _from, address _to, uint _amount, bytes data) public;
+    /// @param _data Data used in the send
+    /// @param _ref Referece
+    function onSend(address _from, address _to, uint _amount, bytes _data, bytes32 _ref) public;
 }

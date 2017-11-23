@@ -22,7 +22,7 @@ contract RecipientERC223 is EIP672 {
         setInterfaceImplementation("ITokenFallback", address(this));
     }
 
-    function tokenFallback(address from, address to, uint amount, bytes data) public {
+    function tokenFallback(address from, address to, uint amount, bytes data, bytes32 ref) public {
         require(data.length == 1 && data[0] == 0x01);
     }
 }
@@ -34,11 +34,24 @@ contract ExternalContract {
 }
 
 contract ProxyAccept {
-    function tokenFallback(address from, address to, uint amount, bytes data) public {}
+    function tokenFallback(address from, address to, uint amount, bytes data, bytes32 ref) public {}
 }
 
 contract ProxyReject {
-    function tokenFallback(address from, address to, uint amount, bytes data) public {
+    function tokenFallback(address from, address to, uint amount, bytes data, bytes32 ref) public {
         require(false);
+    }
+}
+
+contract Erc20Operator {
+    address public owner;
+
+    function Erc20Operator() public {
+        owner = msg.sender;
+    }
+
+    function transferFrom(address token, address from, address to, uint amount) public {
+        require(msg.sender == owner);
+        require(ERC20(token).transferFrom(from, to, amount));
     }
 }

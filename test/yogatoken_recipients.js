@@ -73,7 +73,7 @@ describe('YogaToken recipient test', () => {
   it('Should not be able to transfer to a normal contract', async () => {
     const recipient = await tr.ExternalContract.new(web3);
     try {
-      await yogaToken.transfer(recipient.$address, 1, { from: accounts[1], gas: 400000 });
+      await yogaToken['send(address,uint256)'](recipient.$address, 1, { from: accounts[1], gas: 400000 });
     } catch (e) {
       return true;
     }
@@ -82,7 +82,7 @@ describe('YogaToken recipient test', () => {
 
   it('Should be able to transfer ERC223 contract', async () => {
     const recipient = await tr.RecipientERC223.new(web3, { from: accounts[0], gas: 2000000 });
-    await yogaToken['transfer(address,uint256,bytes)'](recipient.$address, 1, '0x01', { from: accounts[1], gas: 400000 });
+    await yogaToken['send(address,uint256,bytes)'](recipient.$address, 1, '0x01', { from: accounts[1], gas: 400000 });
     const b = await yogaToken.balanceOf(recipient.$address);
     assert.equal(b, 1);
   });
@@ -90,7 +90,7 @@ describe('YogaToken recipient test', () => {
   it('Should NOT be able to transfer ERC223 contract if fallbackToken throws', async () => {
     const recipient = await tr.RecipientERC223.new(web3, { from: accounts[0], gas: 2000000 });
     try {
-      await yogaToken['transfer(address,uint256,bytes)'](recipient.$address, 1, '0x00', { from: accounts[1], gas: 400000 });
+      await yogaToken['send(address,uint256,bytes)'](recipient.$address, 1, '0x00', { from: accounts[1], gas: 400000 });
     } catch (e) {
       return true;
     }
@@ -98,7 +98,7 @@ describe('YogaToken recipient test', () => {
   });
 
   it('Should be able to transfer to normal account', async () => {
-    await yogaToken['transfer(address,uint256,bytes)'](accounts[2], 1, '0x01', { from: accounts[1], gas: 400000 });
+    await yogaToken['send(address,uint256,bytes)'](accounts[2], 1, '0x01', { from: accounts[1], gas: 400000 });
     const b = await yogaToken.balanceOf(accounts[2]);
     assert.equal(b, 1);
   });
@@ -108,7 +108,7 @@ describe('YogaToken recipient test', () => {
 
     await ensSimulator.setProxyInterface(ens, accounts[3], 'ITokenFallback', proxy.$address);
     try {
-      await yogaToken.transfer(accounts[3], 1, { from: accounts[1], gas: 400000 });
+      await yogaToken['send(address,uint256)'](accounts[3], 1, { from: accounts[1], gas: 400000 });
     } catch (e) {
       return true;
     }
@@ -119,7 +119,7 @@ describe('YogaToken recipient test', () => {
     const proxy = await tr.ProxyAccept.new(web3, { from: accounts[0], gas: 2000000 });
 
     await ensSimulator.setProxyInterface(ens, accounts[3], 'ITokenFallback', proxy.$address);
-    await yogaToken.transfer(accounts[3], 1, { from: accounts[1], gas: 400000 });
+    await yogaToken['send(address,uint256)'](accounts[3], 1, { from: accounts[1], gas: 400000 });
     const b = await yogaToken.balanceOf(accounts[3]);
     assert.equal(b, 1);
   });

@@ -120,8 +120,9 @@ contract Campaign is ITokenController, Owned, EIP672 {
 /// @param _from The origin of the transfer
 /// @param _to The destination of the transfer
 /// @param _amount The amount of the transfer
-/// @return False if the controller does not authorize the transfer
-    function onTransfer(address _from, address _to, uint _amount, bytes _data) public {
+/// @param _data The data of the send
+/// @param _ref The reference of the send
+    function onSend(address _from, address _to, uint _amount, bytes _data, bytes32 _ref) public {
     }
 
 
@@ -148,9 +149,7 @@ contract Campaign is ITokenController, Owned, EIP672 {
 
 // Creates an equal amount of tokens as ether sent. The new tokens are created
 //  in the `_owner` address
-        tokenContract.generateTokens(_owner, msg.value, "");
-
-        return;
+        tokenContract.generateTokens(_owner, msg.value, "", 0);
     }
 
 /// @notice `finalizeFunding()` ends the Campaign by calling setting the

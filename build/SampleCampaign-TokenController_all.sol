@@ -32,12 +32,18 @@ interface IENS {
 }
 
 interface IReverseRegistrar {
+    function defaultResolver() public constant returns (address);
     function claimWithResolver(address _owner, address _resolver) public returns (bytes32 node);
 }
 
 interface IPublicResolver {
     function addr(bytes32 _node) public constant returns (address ret);
     function setAddr(bytes32 _node, address _addr) public;
+}
+
+interface IReverseResolver {
+    function name(bytes32 _node) public constant returns (address ret);
+    function setName(bytes32 node, string _name) public;
 }
 
 // [functionSig or interfaceId].[address].addr.reverse
@@ -67,12 +73,11 @@ contract EIP672 {
 
       IReverseRegistrar reverseRegistrar = IReverseRegistrar(ens.owner(REVERSE_ROOT_NODE));
 
-      IPublicResolver resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
-      IPublicResolver publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
-
+      // Claim root node with reverse resolver, subnodes with public resolver, to preserve
+      // the ability to use ENS reverse resolution.
       reverseRegistrar.claimWithResolver(
         address(this),
-        address(publicResolver));
+        reverseRegistrar.defaultResolver());
     }
 
     function setInterfaceImplementation(string ifaceLabel, address impl) internal {
@@ -96,6 +101,31 @@ contract EIP672 {
         IPublicResolver resolver = IPublicResolver(ens.resolver(ifaceNode));
         if (address(resolver) == 0) return 0;
         return resolver.addr(ifaceNode);
+    }
+
+    // @dev Set this contract's ENS domain name in the reverse resolver. This only
+    // works if this contract retains ownership of the ENS reverse root node. It is
+    // up to the derived contract to either call this method, provide a method for
+    // an external address to call this method, or release ownership of the ENS
+    // reverse root node to an external address in order for ENS reverse resolution to work.
+    // @param _name The ENS domain name that this contract's address should resolve to.
+    function setReverseName(string _name) internal {
+        bytes32 node = rootNodeForAddress(address(this));
+        require(ens.owner(node) == address(this));
+        IReverseResolver resolver = IReverseResolver(ens.resolver(node));
+        resolver.setName(node, _name);
+    }
+
+    // @dev Release ownership of this contract's ENS reverse root node to another
+    // address to allow setting reverse ENS name and updating interface subnodes
+    // externally. It is up to the derived contract to determine if, when and how
+    // to call this method based on its own authentication and authorization logic.
+    // @param addr The address that will take ownership of the root node.
+    function releaseRootNodeOwnership(address addr) internal {
+        bytes32 node = rootNodeForAddress(address(this));
+        require(ens.owner(node) == address(this));
+        require(addr != address(0));
+        ens.setOwner(node, addr);
     }
 
     function rootNodeForAddress(address addr) internal constant returns (bytes32) {
@@ -136,7 +166,7 @@ contract EIP672 {
 pragma solidity ^0.4.18;
 
 interface ITokenFallback {
-    function tokenFallback(address _from, address _to, uint _value, bytes _data) public;
+    function tokenFallback(address _from, address _to, uint _value, bytes _data, bytes32 _ref) public;
 }
 
 //File: contracts/ITokenController.sol
@@ -153,7 +183,9 @@ interface ITokenController {
     /// @param _from The origin of the transfer
     /// @param _to The destination of the transfer
     /// @param _amount The amount of the transfer
-    function onTransfer(address _from, address _to, uint _amount, bytes data) public;
+    /// @param _data Data used in the send
+    /// @param _ref Referece
+    function onSend(address _from, address _to, uint _amount, bytes _data, bytes32 _ref) public;
 }
 
 //File: contracts/YogaToken.sol
@@ -236,11 +268,15 @@ contract YogaToken is Controlled, EIP672 {
     // `allowed` tracks any extra transfer rights as in all ERC20 tokens
     mapping (address => mapping (address => uint256)) allowed;
 
+
+    mapping (address => bool) globallyAuthorizedOperators;
+    mapping (address => mapping (address => bool)) authorizedOperators;
+
     // Tracks the history of the `totalSupply` of the token
     Checkpoint[] totalSupplyHistory;
 
     // Flag that determines if the token is transferable or not.
-    bool public transfersEnabled;
+    bool public sendsEnabled;
 
     // The factory used to create new clone tokens
     YogaTokenFactory public tokenFactory;
@@ -261,7 +297,7 @@ contract YogaToken is Controlled, EIP672 {
     /// @param _tokenName Name of the new token
     /// @param _decimalUnits Number of decimals of the new token
     /// @param _tokenSymbol Token Symbol for the new token
-    /// @param _transfersEnabled If true, tokens will be able to be transferred
+    /// @param _sendsEnabled If true, tokens will be able to be transferred
     function YogaToken(
         address _tokenFactory,
         address _parentToken,
@@ -269,7 +305,7 @@ contract YogaToken is Controlled, EIP672 {
         string _tokenName,
         uint8 _decimalUnits,
         string _tokenSymbol,
-        bool _transfersEnabled
+        bool _sendsEnabled
     ) public {
         tokenFactory = YogaTokenFactory(_tokenFactory);
         name = _tokenName;                                 // Set the name
@@ -277,7 +313,7 @@ contract YogaToken is Controlled, EIP672 {
         symbol = _tokenSymbol;                             // Set the symbol
         parentToken = YogaToken(_parentToken);
         parentSnapShotBlock = _parentSnapShotBlock;
-        transfersEnabled = _transfersEnabled;
+        sendsEnabled = _sendsEnabled;
         creationBlock = block.number;
         setInterfaceImplementation("IYogaToken", address(this));
     }
@@ -289,55 +325,45 @@ contract YogaToken is Controlled, EIP672 {
 
     /// @notice Send `_amount` tokens to `_to` from `msg.sender`
     /// @param _to The address of the recipient
-    /// @param _amount The amount of tokens to be transferred
-    /// @param _data Date to be transfered to the receipt interface
-    function transfer(address _to, uint256 _amount, bytes _data) public {
-        require(transfersEnabled);
-        return doTransfer(msg.sender, _to, _amount, _data);
+    /// @param _amount The amount of tokens to be sent
+    function send(address _to, uint256 _amount) public {
+        require(sendsEnabled);
+        return doSend(msg.sender, _to, _amount, "", 0);
     }
-
-///////////////////
-// ERC20 Compatible Methods
-///////////////////
 
     /// @notice Send `_amount` tokens to `_to` from `msg.sender`
     /// @param _to The address of the recipient
     /// @param _amount The amount of tokens to be transferred
-    function transfer(address _to, uint256 _amount) public returns(bool) {
-        require(transfersEnabled);
-        doTransfer(msg.sender, _to, _amount, "");
-        return true; // For backwards compatibility.
+    /// @param _data Date to be transfered to the receipt interface
+    function send(address _to, uint256 _amount, bytes _data) public {
+        require(sendsEnabled);
+        return doSend(msg.sender, _to, _amount, _data, 0);
     }
 
-    /// @notice Send `_amount` tokens to `_to` from `_from` on the condition it
-    ///  is approved by `_from`
-    /// @param _from The address holding the tokens being transferred
+    /// @notice Send `_amount` tokens to `_to` from `msg.sender`
     /// @param _to The address of the recipient
-    /// @param _amount The amount of tokens to be transferred
-    function transferFrom(address _from, address _to, uint256 _amount
-    ) public returns (bool) {
-
-        // The controller of this contract can move tokens around at will,
-        //  this is important to recognize! Confirm that you trust the
-        //  controller of this contract, which in most situations should be
-        //  another open source smart contract or 0x0
-        if (msg.sender != controller) {
-            require(transfersEnabled);
-
-            // The standard ERC 20 transferFrom functionality
-            require(allowed[_from][msg.sender] >= _amount);
-            allowed[_from][msg.sender] -= _amount;
-        }
-        doTransfer(_from, _to, _amount, "");
-        return true;  // For backward compatibility (It will return true or with throw)
+    /// @param _amount The amount of tokens to be sent
+    /// @param _data Data to be sent to the receipt interface
+    /// @param _ref Reference payment for accounting purpuses
+    function send(address _to, uint256 _amount, bytes _data, bytes32 _ref) public {
+        require(sendsEnabled);
+        return doSend(msg.sender, _to, _amount, _data, _ref);
     }
 
-    /// @dev This is the actual transfer function in the token contract, it can
+
+    function operatorSend(address _from, address _to, uint256 _amount, bytes _data, bytes32 _ref) public {
+        require( isOperatorAuthorizedFor(msg.sender, _from));
+        doSend(_from, _to, _amount, _data, _ref);
+    }
+
+    /// @dev This is the actual send function in the token contract, it can
     ///  only be called by other functions in this contract.
-    /// @param _from The address holding the tokens being transferred
+    /// @param _from The address holding the tokens being sent
     /// @param _to The address of the recipient
-    /// @param _amount The amount of tokens to be transferred
-    function doTransfer(address _from, address _to, uint _amount, bytes _data
+    /// @param _amount The amount of tokens to be sent
+    /// @param _data Data to be sent to the receipt interface
+    /// @param _ref Reference payment for accounting purpuses
+    function doSend(address _from, address _to, uint _amount, bytes _data, bytes32 _ref
     ) internal {
 
         require(parentSnapShotBlock < block.number);
@@ -352,7 +378,7 @@ contract YogaToken is Controlled, EIP672 {
 
         address controllerImpl = interfaceAddr(controller, "ITokenController");
         if (controllerImpl != 0) {
-            ITokenController(controllerImpl).onTransfer(_from, _to, _amount, _data);
+            ITokenController(controllerImpl).onSend(_from, _to, _amount, _data, _ref);
         }
 
         address fallbackImpl = interfaceAddr(_to, "ITokenFallback");
@@ -373,19 +399,68 @@ contract YogaToken is Controlled, EIP672 {
         require(previousBalanceTo + _amount >= previousBalanceTo); // Check for overflow
         updateValueAtNow(balances[_to], previousBalanceTo + _amount);
 
-        // An event to make the transfer easy to find on the blockchain
-        Transfer(_from, _to, _amount, _data);
 
         if (fallbackImpl != 0) {
-            ITokenFallback(fallbackImpl).tokenFallback(_from, _to, _amount, _data);
+            ITokenFallback(fallbackImpl).tokenFallback(_from, _to, _amount, _data, _ref);
         }
+
+        // An event to make the sends easy to find on the blockchain
+        Transfer(_from, _to, _amount);      // For ERC20 compatibility
+        Send(_from, _to, _amount, _data, _ref);
+
     }
 
-    /// @param _owner The address that's balance is being requested
-    /// @return The balance of `_owner` at the current block
-    function balanceOf(address _owner) public constant returns (uint256 balance) {
-        return balanceOfAt(_owner, block.number);
+///////////////////
+// Operators functions
+///////////////////
+
+    function authorizeOperator(address _operator, bool _authorized) public {
+        authorizedOperators[msg.sender][_operator] = _authorized;
+        AuthorizeOperator(msg.sender, _operator, _authorized);
     }
+
+    function authorizeGlobalOperator(address _operator, bool _authorized)  onlyController public {
+        globallyAuthorizedOperators[_operator] = _authorized;
+        AuthorizeGlobalOperator(_operator, _authorized);
+    }
+
+    function isOperatorAuthorizedFor(address _operator, address _tokenHoler) public constant returns (bool) {
+        return globallyAuthorizedOperators[_operator] || authorizedOperators[_tokenHoler][_operator];
+    }
+
+    function isOperatorGloballyAuthorized(address _operator) public constant returns (bool) {
+        return globallyAuthorizedOperators[_operator];
+    }
+
+///////////////////
+// ERC20 Compatible Methods
+///////////////////
+
+    /// @notice Send `_amount` tokens to `_to` from `msg.sender`
+    /// @param _to The address of the recipient
+    /// @param _amount The amount of tokens to be transferred
+    function transfer(address _to, uint256 _amount) public returns(bool) {
+        require(isContract(msg.sender));
+        require(sendsEnabled);
+        doSend(msg.sender, _to, _amount, "", 0);
+        return true; // For backwards compatibility.
+    }
+
+    /// @notice Send `_amount` tokens to `_to` from `_from` on the condition it
+    ///  is approved by `_from`
+    /// @param _from The address holding the tokens being transferred
+    /// @param _to The address of the recipient
+    /// @param _amount The amount of tokens to be transferred
+    function transferFrom(address _from, address _to, uint256 _amount
+    ) public returns (bool) {
+        require(isContract(msg.sender));
+        require(sendsEnabled);
+        require(allowed[_from][msg.sender] >= _amount);
+        if (allowed[_from][msg.sender] < uint(-1)) allowed[_from][msg.sender] -= _amount;
+        doSend(_from, _to, _amount, "", 0);
+        return true; // For backwards compatibility.
+    }
+
 
     /// @notice `msg.sender` approves `_spender` to spend `_amount` tokens on
     ///  its behalf. This is a modified version of the ERC20 approve function
@@ -393,7 +468,7 @@ contract YogaToken is Controlled, EIP672 {
     /// @param _spender The address of the account able to transfer the tokens
     /// @param _amount The amount of tokens to be approved for transfer
     function approve(address _spender, uint256 _amount) public returns(bool) {
-        require(transfersEnabled);
+        require(sendsEnabled);
 
         // To change the approve amount you first have to reduce the addresses`
         //  allowance to zero by calling `approve(_spender,0)` if it is not
@@ -406,6 +481,16 @@ contract YogaToken is Controlled, EIP672 {
         return true;  // For backwards compatibility
     }
 
+///////////////////
+// Constant functions
+///////////////////
+
+    /// @param _owner The address that's balance is being requested
+    /// @return The balance of `_owner` at the current block
+    function balanceOf(address _owner) public constant returns (uint256 balance) {
+        return balanceOfAt(_owner, block.number);
+    }
+
     /// @dev This function makes it easy to read the `allowed[]` map
     /// @param _owner The address of the account that owns the token
     /// @param _spender The address of the account able to transfer the tokens
@@ -414,25 +499,6 @@ contract YogaToken is Controlled, EIP672 {
     function allowance(address _owner, address _spender
     ) public constant returns (uint256 remaining) {
         return allowed[_owner][_spender];
-    }
-
-    /// @notice `msg.sender` approves `_spender` to send `_amount` tokens on
-    ///  its behalf, and then a function is triggered in the contract that is
-    ///  being approved, `_spender`. This allows users to use their tokens to
-    ///  interact with contracts in one function call instead of two
-    /// @param _spender The address of the contract able to transfer the tokens
-    /// @param _amount The amount of tokens to be approved for transfer
-    /// @return True if the function call was successful
-    function approveAndCall(address _spender, uint256 _amount, bytes _extraData
-    ) public {
-        approve(_spender, _amount);
-
-        IApproveAndCallFallBack(_spender).receiveApproval(
-            msg.sender,
-            _amount,
-            this,
-            _extraData
-        );
     }
 
     /// @dev This function makes it easy to get the total number of tokens
@@ -509,14 +575,14 @@ contract YogaToken is Controlled, EIP672 {
     /// @param _snapshotBlock Block when the distribution of the parent token is
     ///  copied to set the initial distribution of the new clone token;
     ///  if the block is zero than the actual block, the current block is used
-    /// @param _transfersEnabled True if transfers are allowed in the clone
+    /// @param _sendsEnabled True if transfers are allowed in the clone
     /// @return The address of the new YogaToken Contract
     function createCloneToken(
         string _cloneTokenName,
         uint8 _cloneDecimalUnits,
         string _cloneTokenSymbol,
         uint _snapshotBlock,
-        bool _transfersEnabled
+        bool _sendsEnabled
         ) public returns(address) {
         if (_snapshotBlock == 0) _snapshotBlock = block.number;
         YogaToken cloneToken = tokenFactory.createCloneToken(
@@ -525,7 +591,7 @@ contract YogaToken is Controlled, EIP672 {
             _cloneTokenName,
             _cloneDecimalUnits,
             _cloneTokenSymbol,
-            _transfersEnabled
+            _sendsEnabled
             );
 
         cloneToken.changeController(msg.sender);
@@ -543,7 +609,7 @@ contract YogaToken is Controlled, EIP672 {
     /// @param _amount The quantity of tokens generated
     function generateTokens(address _owner, uint _amount
     ) public {
-        generateTokens(_owner, _amount, "");
+        generateTokens(_owner, _amount, "", 0);
     }
 
 
@@ -551,8 +617,9 @@ contract YogaToken is Controlled, EIP672 {
     /// @param _owner The address that will be assigned the new tokens
     /// @param _amount The quantity of tokens generated
     /// @param _data The data to be sended to tokenFallback
+    /// @param _ref The reference of the generation
     /// @return True if the tokens are generated correctly
-    function generateTokens(address _owner, uint _amount, bytes _data
+    function generateTokens(address _owner, uint _amount, bytes _data, bytes32 _ref
     ) public onlyController {
 
         address fallbackImpl = interfaceAddr(_owner, "ITokenFallback");
@@ -569,18 +636,28 @@ contract YogaToken is Controlled, EIP672 {
 
         updateValueAtNow(totalSupplyHistory, curTotalSupply + _amount);
         updateValueAtNow(balances[_owner], previousBalanceTo + _amount);
-        Transfer(0, _owner, _amount, _data);
 
         if (fallbackImpl != 0) {
-            ITokenFallback(fallbackImpl).tokenFallback(0, _owner, _amount, _data);
+            ITokenFallback(fallbackImpl).tokenFallback(0, _owner, _amount, _data, _ref);
         }
-    }
 
+        Transfer(0, _owner, _amount);
+        Send(_owner, 0, _amount, _data, _ref);
+    }
 
     /// @notice Burns `_amount` tokens from `_owner`
     /// @param _owner The address that will lose the tokens
     /// @param _amount The quantity of tokens to burn
     function destroyTokens(address _owner, uint _amount
+    ) public {
+        destroyTokens(_owner, _amount, 0);
+    }
+
+    /// @notice Burns `_amount` tokens from `_owner`
+    /// @param _owner The address that will lose the tokens
+    /// @param _amount The quantity of tokens to burn
+    /// @param _ref Referenci of the destroy
+    function destroyTokens(address _owner, uint _amount, bytes32 _ref
     ) onlyController public {
         uint curTotalSupply = totalSupply();
         require(curTotalSupply >= _amount);
@@ -588,7 +665,9 @@ contract YogaToken is Controlled, EIP672 {
         require(previousBalanceFrom >= _amount);
         updateValueAtNow(totalSupplyHistory, curTotalSupply - _amount);
         updateValueAtNow(balances[_owner], previousBalanceFrom - _amount);
-        Transfer(_owner, 0, _amount, "");
+
+        Transfer(_owner, 0, _amount);
+        Send(_owner, 0, _amount, "", _ref);
     }
 
 ////////////////
@@ -597,9 +676,9 @@ contract YogaToken is Controlled, EIP672 {
 
 
     /// @notice Enables token holders to transfer their tokens freely if true
-    /// @param _transfersEnabled True if transfers are allowed in the clone
-    function enableTransfers(bool _transfersEnabled) public onlyController {
-        transfersEnabled = _transfersEnabled;
+    /// @param _sendsEnabled True if transfers are allowed in the clone
+    function enableSends(bool _sendsEnabled) public onlyController {
+        sendsEnabled = _sendsEnabled;
     }
 
 ////////////////
@@ -688,8 +767,12 @@ contract YogaToken is Controlled, EIP672 {
 // Events
 ////////////////
     event ClaimedTokens(address indexed token, address indexed controller, uint amount);
-    event Transfer(address indexed from, address indexed to, uint256 amount, bytes data);
+    event Send(address indexed from, address indexed to, uint256 amount, bytes data,bytes32 indexed ref);
     event NewCloneToken(address indexed cloneToken, uint snapshotBlock);
+    event AuthorizeOperator(address indexed holder, address indexed operator, bool authorize);
+    event AuthorizeGlobalOperator(address indexed operator, bool authorize);
+
+    event Transfer(address indexed from, address indexed to, uint256 amount);
     event Approval(
         address indexed _owner,
         address indexed _spender,
@@ -864,8 +947,9 @@ contract Campaign is ITokenController, Owned, EIP672 {
 /// @param _from The origin of the transfer
 /// @param _to The destination of the transfer
 /// @param _amount The amount of the transfer
-/// @return False if the controller does not authorize the transfer
-    function onTransfer(address _from, address _to, uint _amount, bytes _data) public {
+/// @param _data The data of the send
+/// @param _ref The reference of the send
+    function onSend(address _from, address _to, uint _amount, bytes _data, bytes32 _ref) public {
     }
 
 
@@ -892,9 +976,7 @@ contract Campaign is ITokenController, Owned, EIP672 {
 
 // Creates an equal amount of tokens as ether sent. The new tokens are created
 //  in the `_owner` address
-        tokenContract.generateTokens(_owner, msg.value, "");
-
-        return;
+        tokenContract.generateTokens(_owner, msg.value, "", 0);
     }
 
 /// @notice `finalizeFunding()` ends the Campaign by calling setting the

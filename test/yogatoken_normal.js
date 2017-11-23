@@ -7,6 +7,7 @@ const chai = require('chai');
 const YogaToken = require('../index.js').YogaToken;
 const YogaTokenFactory = require('../index.js').YogaTokenFactory;
 const YogaTokenState = require('../index.js').YogaTokenState;
+const Erc20Operator = require('../js/testRecipients.js').Erc20Operator;
 
 const ensSimulator = require('ens-simulator');
 
@@ -85,8 +86,8 @@ describe('YogaToken test', () => {
     b[1] = await web3.eth.getBlockNumber();
   }).timeout(6000);
 
-  it('Should transfer tokens from address 1 to address 2', async () => {
-    await yogaToken.transfer(accounts[2], 2, { from: accounts[1], gas: 200000 });
+  it('Should send tokens from address 1 to address 2', async () => {
+    await yogaToken['send(address,uint256)'](accounts[2], 2, { from: accounts[1], gas: 200000 });
     b[2] = await web3.eth.getBlockNumber();
     log(`b[2]->  ${b[3]}`);
     const st = await yogaTokenState.getState();
@@ -98,14 +99,20 @@ describe('YogaToken test', () => {
     assert.equal(balance, 10);
   }).timeout(6000);
 
-  it('Should allow and transfer tokens from address 2 to address 1 allowed to 3', async () => {
-    await yogaToken.approve(accounts[3], 2, { from: accounts[2] });
-    const allowed = await yogaToken.allowance(accounts[2], accounts[3]);
+  it('Should allow and send tokens from address 2 to address 1 allowed to contract', async () => {
+    const erc20Operator = await Erc20Operator.new(web3, { from: accounts[3], gas: 3000000 });
+    await yogaToken.approve(erc20Operator.$address, 2, { from: accounts[2] });
+    const allowed = await yogaToken.allowance(accounts[2], erc20Operator.$address);
     assert.equal(allowed, 2);
 
-    await yogaToken.transferFrom(accounts[2], accounts[1], 1, { from: accounts[3], gas: 300000 });
+    await erc20Operator.transferFrom(
+      yogaToken.$address,
+      accounts[2],
+      accounts[1],
+      1,
+      { from: accounts[3], gas: 300000 });
 
-    const allowed2 = await yogaToken.allowance(accounts[2], accounts[3]);
+    const allowed2 = await yogaToken.allowance(accounts[2], erc20Operator.$address);
     assert.equal(allowed2, 1);
 
     b[3] = await web3.eth.getBlockNumber();
@@ -177,11 +184,11 @@ describe('YogaToken test', () => {
   }).timeout(6000);
 
   it('Should mine one block to take effect clone', async () => {
-    await yogaToken.transfer(accounts[1], 1, { from: accounts[1] });
+    await yogaToken['send(address,uint256)'](accounts[1], 1, { from: accounts[1] });
   });
 
   it('Should move tokens in the clone token from 2 to 3', async () => {
-    await yogaTokenClone.transfer(accounts[2], 4, { from: accounts[1], gas: 300000 });
+    await yogaTokenClone['send(address,uint256)'](accounts[2], 4, { from: accounts[1], gas: 300000 });
     b[6] = await web3.eth.getBlockNumber();
     log(`b[6]->  ${b[6]}`);
 
@@ -213,7 +220,7 @@ describe('YogaToken test', () => {
   }).timeout(6000);
 
   it('Should create tokens in the child token', async () => {
-    await yogaTokenClone.generateTokens(accounts[1], 10, '0x', { from: accounts[0], gas: 300000 });
+    await yogaTokenClone.generateTokens(accounts[1], 10, '0x', '0x00', { from: accounts[0], gas: 300000 });
     const st = await yogaTokenCloneState.getState();
     assert.equal(st.totalSupply, 17);
     assert.equal(st.balances[accounts[1]], 12);

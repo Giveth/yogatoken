@@ -13,12 +13,18 @@ interface IENS {
 }
 
 interface IReverseRegistrar {
+    function defaultResolver() public constant returns (address);
     function claimWithResolver(address _owner, address _resolver) public returns (bytes32 node);
 }
 
 interface IPublicResolver {
     function addr(bytes32 _node) public constant returns (address ret);
     function setAddr(bytes32 _node, address _addr) public;
+}
+
+interface IReverseResolver {
+    function name(bytes32 _node) public constant returns (address ret);
+    function setName(bytes32 node, string _name) public;
 }
 
 // [functionSig or interfaceId].[address].addr.reverse
@@ -48,12 +54,11 @@ contract EIP672 {
 
       IReverseRegistrar reverseRegistrar = IReverseRegistrar(ens.owner(REVERSE_ROOT_NODE));
 
-      IPublicResolver resolver = IPublicResolver(ens.resolver(PUBLICRESOLVE_ROOT_NODE));
-      IPublicResolver publicResolver = IPublicResolver(resolver.addr(PUBLICRESOLVE_ROOT_NODE));
-
+      // Claim root node with reverse resolver, subnodes with public resolver, to preserve
+      // the ability to use ENS reverse resolution.
       reverseRegistrar.claimWithResolver(
         address(this),
-        address(publicResolver));
+        reverseRegistrar.defaultResolver());
     }
 
     function setInterfaceImplementation(string ifaceLabel, address impl) internal {
@@ -77,6 +82,31 @@ contract EIP672 {
         IPublicResolver resolver = IPublicResolver(ens.resolver(ifaceNode));
         if (address(resolver) == 0) return 0;
         return resolver.addr(ifaceNode);
+    }
+
+    // @dev Set this contract's ENS domain name in the reverse resolver. This only
+    // works if this contract retains ownership of the ENS reverse root node. It is
+    // up to the derived contract to either call this method, provide a method for
+    // an external address to call this method, or release ownership of the ENS
+    // reverse root node to an external address in order for ENS reverse resolution to work.
+    // @param _name The ENS domain name that this contract's address should resolve to.
+    function setReverseName(string _name) internal {
+        bytes32 node = rootNodeForAddress(address(this));
+        require(ens.owner(node) == address(this));
+        IReverseResolver resolver = IReverseResolver(ens.resolver(node));
+        resolver.setName(node, _name);
+    }
+
+    // @dev Release ownership of this contract's ENS reverse root node to another
+    // address to allow setting reverse ENS name and updating interface subnodes
+    // externally. It is up to the derived contract to determine if, when and how
+    // to call this method based on its own authentication and authorization logic.
+    // @param addr The address that will take ownership of the root node.
+    function releaseRootNodeOwnership(address addr) internal {
+        bytes32 node = rootNodeForAddress(address(this));
+        require(ens.owner(node) == address(this));
+        require(addr != address(0));
+        ens.setOwner(node, addr);
     }
 
     function rootNodeForAddress(address addr) internal constant returns (bytes32) {
@@ -138,7 +168,7 @@ contract RecipientERC223 is EIP672 {
         setInterfaceImplementation("ITokenFallback", address(this));
     }
 
-    function tokenFallback(address from, address to, uint amount, bytes data) public {
+    function tokenFallback(address from, address to, uint amount, bytes data, bytes32 ref) public {
         require(data.length == 1 && data[0] == 0x01);
     }
 }
@@ -150,11 +180,24 @@ contract ExternalContract {
 }
 
 contract ProxyAccept {
-    function tokenFallback(address from, address to, uint amount, bytes data) public {}
+    function tokenFallback(address from, address to, uint amount, bytes data, bytes32 ref) public {}
 }
 
 contract ProxyReject {
-    function tokenFallback(address from, address to, uint amount, bytes data) public {
+    function tokenFallback(address from, address to, uint amount, bytes data, bytes32 ref) public {
         require(false);
+    }
+}
+
+contract Erc20Operator {
+    address public owner;
+
+    function Erc20Operator() public {
+        owner = msg.sender;
+    }
+
+    function transferFrom(address token, address from, address to, uint amount) public {
+        require(msg.sender == owner);
+        require(ERC20(token).transferFrom(from, to, amount));
     }
 }
